@@ -98,15 +98,13 @@ function getDoubanProxyConfig(): {
     | 'custom';
   proxyUrl: string;
 } {
-  // CHANGED: env variable (RUNTIME_CONFIG) now takes priority over localStorage
-  // This allows Vercel-deployed env vars to act as the default for all users
   const doubanProxyType =
-    (window as any).RUNTIME_CONFIG?.DOUBAN_PROXY_TYPE ||
     localStorage.getItem('doubanDataSource') ||
+    (window as any).RUNTIME_CONFIG?.DOUBAN_PROXY_TYPE ||
     'direct';
   const doubanProxy =
-    (window as any).RUNTIME_CONFIG?.DOUBAN_PROXY ||
     localStorage.getItem('doubanProxyUrl') ||
+    (window as any).RUNTIME_CONFIG?.DOUBAN_PROXY ||
     '';
   return {
     proxyType: doubanProxyType,
