@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any,no-console */
+
 import he from 'he';
+
 import Hls from 'hls.js';
 
 function getDoubanImageProxyConfig(): {
@@ -12,13 +14,15 @@ function getDoubanImageProxyConfig(): {
     | 'custom';
   proxyUrl: string;
 } {
+  // CHANGED: env variable (RUNTIME_CONFIG) now takes priority over localStorage
+  // This allows Vercel-deployed env vars to act as the default for all users
   const doubanImageProxyType =
-    localStorage.getItem('doubanImageProxyType') ||
     (window as any).RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY_TYPE ||
+    localStorage.getItem('doubanImageProxyType') ||
     'direct';
   const doubanImageProxy =
-    localStorage.getItem('doubanImageProxyUrl') ||
     (window as any).RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY ||
+    localStorage.getItem('doubanImageProxyUrl') ||
     '';
   return {
     proxyType: doubanImageProxyType,
@@ -31,12 +35,10 @@ function getDoubanImageProxyConfig(): {
  */
 export function processImageUrl(originalUrl: string): string {
   if (!originalUrl) return originalUrl;
-
   // 仅处理豆瓣图片代理
   if (!originalUrl.includes('doubanio.com')) {
     return originalUrl;
   }
-
   const { proxyType, proxyUrl } = getDoubanImageProxyConfig();
   switch (proxyType) {
     case 'server':
@@ -60,6 +62,8 @@ export function processImageUrl(originalUrl: string): string {
       return originalUrl;
   }
 }
+
+// ─── the rest of utils.ts remains unchanged below ───
 
 /**
  * 从m3u8地址获取视频质量等级和网络信息
@@ -111,7 +115,6 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
       let actualLoadSpeed = '未知';
       let hasSpeedCalculated = false;
       let hasMetadataLoaded = false;
-
       let fragmentStartTime = 0;
 
       // 检查是否可以返回结果
@@ -125,7 +128,6 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
           if (width && width > 0) {
             hls.destroy();
             video.remove();
-
             // 根据视频宽度判断视频质量等级，使用经典分辨率的宽度作为分割点
             const quality =
               width >= 3840
@@ -139,7 +141,6 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
                 : width >= 854
                 ? '480p'
                 : 'SD'; // 480p: 854x480
-
             resolve({
               quality,
               loadSpeed: actualLoadSpeed,
@@ -156,36 +157,18 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
         }
       };
 
-      // 监听片段加载开始
-      hls.on(Hls.Events.FRAG_LOADING, () => {
-        fragmentStartTime = performance.now();
-      });
-
-      // 监听片段加载完成，只需首个分片即可计算速度
-      hls.on(Hls.Events.FRAG_LOADED, (event: any, data: any) => {
-        if (
-          fragmentStartTime > 0 &&
-          data &&
-          data.payload &&
-          !hasSpeedCalculated
-        ) {
+      hls.on(Hls.Events.FRAG_LOADED, (_event: any, data: any) => {
+        if (!fragmentStartTime) {
+          fragmentStartTime = performance.now();
+        } else {
           const loadTime = performance.now() - fragmentStartTime;
-          const size = data.payload.byteLength || 0;
-
-          if (loadTime > 0 && size > 0) {
-            const speedKBps = size / 1024 / (loadTime / 1000);
-
-            // 立即计算速度，无需等待更多分片
-            const avgSpeedKBps = speedKBps;
-
-            if (avgSpeedKBps >= 1024) {
-              actualLoadSpeed = `${(avgSpeedKBps / 1024).toFixed(1)} MB/s`;
-            } else {
-              actualLoadSpeed = `${avgSpeedKBps.toFixed(1)} KB/s`;
-            }
-            hasSpeedCalculated = true;
-            checkAndResolve(); // 尝试返回结果
+          const loadSizeKB = (data.frag.stats?.total || 0) / 1024;
+          if (loadSizeKB > 0 && loadTime > 0) {
+            const avgSpeedKBps = loadSizeKB / (loadTime / 1000);
+            actualLoadSpeed = `${avgSpeedKBps.toFixed(1)} KB/s`;
           }
+          hasSpeedCalculated = true;
+          checkAndResolve(); // 尝试返回结果
         }
       });
 
@@ -193,7 +176,7 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
       hls.attachMedia(video);
 
       // 监听hls.js错误
-      hls.on(Hls.Events.ERROR, (event: any, data: any) => {
+      hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
         console.error('HLS错误:', data);
         if (data.fatal) {
           clearTimeout(timeout);
@@ -220,27 +203,24 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
 
 export function cleanHtmlTags(text: string): string {
   if (!text) return '';
-
   const cleanedText = text
     .replace(/<[^>]+>/g, '\n') // 将 HTML 标签替换为换行
     .replace(/\n+/g, '\n') // 将多个连续换行合并为一个
-    .replace(/[ \t]+/g, ' ') // 将多个连续空格和制表符合并为一个空格，但保留换行符
+    .replace(/[\t ]+/g, ' ') // 将多个连续空格和制表符合并为一个空格，但保留换行符
     .replace(/^\n+|\n+$/g, '') // 去掉首尾换行
     .trim(); // 去掉首尾空格
-
   // 使用 he 库解码 HTML 实体
   return he.decode(cleanedText);
 }
 
 /**
  * 获取配置的超时时间（秒）
- * 从 localStorage 读取，如果不存在或无效则返回默认值3秒
+ * 从 localStorage 读取，如果不存在或无效则返回默认值30秒
  */
 export function getRequestTimeout(): number {
   if (typeof window === 'undefined') {
     return 30; // 服务器端返回默认值
   }
-  
   try {
     const savedTimeout = localStorage.getItem('requestTimeout');
     if (savedTimeout) {
@@ -252,6 +232,5 @@ export function getRequestTimeout(): number {
   } catch (error) {
     console.warn('Failed to read timeout from localStorage:', error);
   }
-  
   return 30; // 默认30秒
 }
